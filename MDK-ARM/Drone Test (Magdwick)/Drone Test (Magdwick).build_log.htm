@@ -1,0 +1,73 @@
+<html>
+<body>
+<pre>
+<h1>µVision Build Log</h1>
+<h2>Tool Versions:</h2>
+IDE-Version: µVision V5.25.2.0
+Copyright (C) 2018 ARM Ltd and ARM Germany GmbH. All rights reserved.
+License Information: Batu Gunduz, none, LIC=----
+ 
+Tool Versions:
+Toolchain:       MDK-Lite  Version: 5.25.2.0
+Toolchain Path:  D:\Keil_v5\ARM\ARMCC\Bin
+C Compiler:      Armcc.exe V5.06 update 6 (build 750)
+Assembler:       Armasm.exe V5.06 update 6 (build 750)
+Linker/Locator:  ArmLink.exe V5.06 update 6 (build 750)
+Library Manager: ArmAr.exe V5.06 update 6 (build 750)
+Hex Converter:   FromElf.exe V5.06 update 6 (build 750)
+CPU DLL:         SARMCM3.DLL V5.25.2.0
+Dialog DLL:      DCM.DLL V1.17.1.0
+Target DLL:      STLink\ST-LINKIII-KEIL_SWO.dll V3.0.1.0
+Dialog DLL:      TCM.DLL V1.35.1.0
+ 
+<h2>Project:</h2>
+D:\Batu\Ikincil Masaustu\STM32 Projects\Test Sketches (KeilUVision)\Drone Test (Magdwick)\MDK-ARM\Drone Test (Magdwick).uvprojx
+Project File Date:  01/20/2020
+
+<h2>Output:</h2>
+*** Using Compiler 'V5.06 update 6 (build 750)', folder: 'D:\Keil_v5\ARM\ARMCC\Bin'
+Build target 'Drone Test (Magdwick)'
+compiling main.c...
+../Src/main.c(245): warning:  #940-D: missing return statement at end of non-void function "map_with_midpoint" 
+  }
+../Src/main.c(276): warning:  #940-D: missing return statement at end of non-void function "mpu_register_set_new" 
+  }
+../Src/main.c(427): warning:  #188-D: enumerated type mixed with another type
+  			HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13, 1);
+../Src/main.c(429): warning:  #188-D: enumerated type mixed with another type
+  			HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13, 0);
+../Src/main.c(769): warning:  #188-D: enumerated type mixed with another type
+  			HAL_GPIO_WritePin(CE_GPIO_Port,CE_Pin,1);
+../Src/main.c(809): warning:  #188-D: enumerated type mixed with another type
+  			HAL_GPIO_WritePin(CE_GPIO_Port,CE_Pin,0);
+../Src/main.c: 6 warnings, 0 errors
+linking...
+Program Size: Code=28196 RO-data=532 RW-data=1000 ZI-data=6440  
+FromELF: creating hex file...
+"Drone Test (Magdwick)\Drone Test (Magdwick).axf" - 0 Error(s), 6 Warning(s).
+
+<h2>Software Packages used:</h2>
+
+Package Vendor: ARM
+                http://www.keil.com/pack/ARM.CMSIS.5.4.0.pack
+                ARM.CMSIS.5.4.0
+                CMSIS (Cortex Microcontroller Software Interface Standard)
+   * Component: CORE Version: 5.1.2
+
+Package Vendor: Keil
+                http://www.keil.com/pack/Keil.STM32F1xx_DFP.2.3.0.pack
+                Keil.STM32F1xx_DFP.2.3.0
+                STMicroelectronics STM32F1 Series Device Support, Drivers and Examples
+
+<h2>Collection of Component include folders:</h2>
+  .\RTE\_Drone_Test__Magdwick_
+  D:\Keil_v5\ARM\PACK\ARM\CMSIS\5.4.0\CMSIS\Core\Include
+  D:\Keil_v5\ARM\PACK\Keil\STM32F1xx_DFP\2.3.0\Device\Include
+
+<h2>Collection of Component Files used:</h2>
+
+   * Component: ARM::CMSIS:CORE:5.1.2
+Build Time Elapsed:  00:00:03
+</pre>
+</body>
+</html>
