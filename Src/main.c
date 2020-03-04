@@ -186,12 +186,12 @@ static void MX_TIM3_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
+
+#ifdef __GNUC__
 #define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
-//#ifdef __GNUC__
-//  
-//#else
-//	#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
-//#endif
+#else
+	#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
+#endif
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -253,7 +253,7 @@ uint8_t mpu_register_set_new(uint8_t address, uint8_t data, uint8_t tries){
 			return HAL_OK;
 		}
 	}
-	if(data_read == data){
+	if(data_read != data){
 			return HAL_ERROR;
 	}
 }
@@ -275,7 +275,7 @@ void mpu_read(void){
 	gyroX_raw = rawData[4];
 	gyroY_raw = rawData[5];
 	gyroZ_raw = rawData[6];
-	if(samples < 500) {
+	/*if(samples < 500) {
 			samples++;
 			offsetting = 1;
 			return;
@@ -287,12 +287,12 @@ void mpu_read(void){
 			samples++;
 			offsetting = 1;
 			return;
-		} 
-		else{
-			/*gyroX_Offset /= 1000;
+		} */
+		/*else{
+			gyroX_Offset /= 1000;
 			gyroY_Offset /= 1000;
-			gyroZ_Offset /= 1000;*/
-		} 
+			gyroZ_Offset /= 1000;
+		}*/
 		offsetting = 0;
 		gyroX_raw -= gyroX_Offset/1000;
 		gyroY_raw -= gyroY_Offset/1000;
