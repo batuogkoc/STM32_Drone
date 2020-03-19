@@ -54,8 +54,9 @@
 /* USER CODE BEGIN 0 */
 #include "math.h"
 extern _Bool nrf24_available;
-extern uint32_t last_signal;
 extern _Bool new_data;
+extern _Bool receiver_signal_loss;
+extern uint32_t last_signal_micros;
 extern unsigned long reading_elapsed_time;
 extern unsigned long reading_last_time;
 extern uint32_t reading_count;
@@ -68,7 +69,6 @@ extern uint32_t ch_count;
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-extern PCD_HandleTypeDef hpcd_USB_FS;
 extern TIM_HandleTypeDef htim1;
 /* USER CODE BEGIN EV */
 
@@ -226,20 +226,6 @@ void EXTI3_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles USB low priority or CAN RX0 interrupts.
-  */
-void USB_LP_CAN1_RX0_IRQHandler(void)
-{
-  /* USER CODE BEGIN USB_LP_CAN1_RX0_IRQn 0 */
-
-  /* USER CODE END USB_LP_CAN1_RX0_IRQn 0 */
-  HAL_PCD_IRQHandler(&hpcd_USB_FS);
-  /* USER CODE BEGIN USB_LP_CAN1_RX0_IRQn 1 */
-
-  /* USER CODE END USB_LP_CAN1_RX0_IRQn 1 */
-}
-
-/**
   * @brief This function handles EXTI line[9:5] interrupts.
   */
 void EXTI9_5_IRQHandler(void)
@@ -269,11 +255,14 @@ void TIM1_CC_IRQHandler(void)
   /* USER CODE END TIM1_CC_IRQn 0 */
   HAL_TIM_IRQHandler(&htim1);
   /* USER CODE BEGIN TIM1_CC_IRQn 1 */
+	last_signal_micros = microseconds();
 	if(inputCapture > 3000){
 		ch_count = 0;
+		receiver_signal_loss = 0;
 		return;
 	}
-	else if(ch_count<8){
+	
+	if(ch_count<8){
 		
 		
 		//without filter
@@ -291,10 +280,9 @@ void TIM1_CC_IRQHandler(void)
 		
 		ch_count++;
 	}
-	else if(ch_count == 9){
+	else if(ch_count == 8){
 		return;
 	}
-	last_signal = microseconds();
   /* USER CODE END TIM1_CC_IRQn 1 */
 }
 
