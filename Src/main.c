@@ -35,7 +35,7 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-typedef struct {
+typedef struct{
 	float p;
 	float i;
 	float d;
@@ -48,15 +48,59 @@ typedef struct {
 	uint64_t elapsed_seconds; //private
 }PID_TypeDef;
 
+typedef enum{
+	MPU_Slave_Number_0 = 0,
+	MPU_Slave_Number_1 = 1,
+	MPU_Slave_Number_2 = 2,
+	MPU_Slave_Number_3 = 3,
+	MPU_Slave_RW_Read = 0x1U, 
+	MPU_Slave_RW_Write = 0x0U,
+	MPU_Slave_RW_Default = 0x0U,
+	MPU_Slave_Enable = 0x1U,
+	MPU_Slave_Disable = 0x0U,
+	MPU_Slave_Byte_Swapping_EN = 0x1U,
+	MPU_Slave_Byte_Swapping_DIS = 0x0U,
+	MPU_Slave_Byte_Swapping_Default = 0x0U,
+	MPU_Slave_REG_DIS_Default = 0x0U,
+	MPU_Slave_Byte_Grouping_Even_Odd = 0x0U,
+	MPU_Slave_Byte_Grouping_Odd_Even = 0x1U,
+	MPU_Slave_Byte_Grouping_Default = 0x0U
+}MPU_Slave_StatusTypeDef;
+
+typedef struct{
+	uint8_t Slave_Number;//Specifies which slave is used. This struct is for Slave 0 to Slave 3. Slave 4 not yet supported.
+	bool RW; //slave read/write select
+	uint8_t Periph_Address; //peripheral bus address
+	uint8_t Register_Address; //Internal register addess in peripheral to start read from
+	bool Slave_Enable; //enables Slave 0 for I2C data transaction
+	bool Byte_Swapping; //configures byte swapping of word pairs. When byte swapping is enabled, the high and low bytes of a word pair are swapped.
+	bool REG_DIS; //should equal 0 when register address set
+	bool Byte_Grouping;//specifies the grouping order of word pairs received from registers
+	uint8_t Transfer_Length; //Specifies the number of bytes transferred to and from slave
+}MPU_Slave_TypeDef;
+
+//typedef enum
+//{
+//  Read_OK = 0x00U, //everything ok
+//  Read_MPU_ERROR = 0x01U, //fatal error, cant reach mpu
+//  Read_BMP_ERROR = 0x02U, //cant reach bmp
+//	Read_BMP_BUSY = 0x03U, //mpu reading from bmp
+//	Read_MPU_Offset_Measuring = 0x04U //mpu is offsetting
+//} Read_StatusTypedef;
 typedef enum
 {
   Read_OK = 0x00U, //everything ok
-  Read_MPU_ERROR = 0x01U, //fatal error, cant reach mpu
-  Read_BMP_ERROR = 0x02U, //cant reach bmp
-	Read_BMP_BUSY = 0x03U, //mpu reading from bmp
-	Read_MPU_Offset_Measuring = 0x04U //mpu is offsetting
+  Read_Error = 0x01U, //fatal error, cant reach mpu
+	Read_Busy = 0x02U, //fatal error, cant reach mpu
+	Read_Offset_Measuring = 0x03U, //mpu is offsetting
 } Read_StatusTypedef;
 
+typedef struct
+{
+  Read_StatusTypedef MPU_Status;
+	Read_StatusTypedef BMP_Status;
+	Read_StatusTypedef HMC_Status;
+} Read_ReturnTypedef;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -64,6 +108,7 @@ typedef enum
 //i2c addresses
 #define mpu_i2c_address 0x68
 #define bmp_i2c_address 0x76
+#define hmc_i2c_address 0x1E
 
 //reciever channel allocations
 #define rollIn_ch ch[3]
@@ -109,13 +154,13 @@ UART_HandleTypeDef huart3;
 
 
 _Bool new_data = 0;
-_Bool offsetting = 1;
 //I2C Variables
 uint8_t txBuffer[2];
-uint8_t rxBuffer[24];
+uint8_t rxBuffer[30];
 int16_t rawData[7];
 
 //Mpu data storage variables
+Read_ReturnTypedef mpu_read_status;
 float accX, accY, accZ, temp, gyroX, gyroY, gyroZ, gyroX_rad, gyroY_rad, gyroZ_rad; //raw usable data
 float accX_raw, accY_raw, accZ_raw, gyroX_raw, gyroY_raw, gyroZ_raw;
 float roll, pitch, yaw;
@@ -224,10 +269,26 @@ int16_t dig_P8 = 0;
 int16_t dig_P9 = 0;
 const float sea_level_press = 101325.0;
 
-//bmp measurements
-double pressure = 0;
-double temperature = 0;
-double altitude = 0;
+//Bmp data
+MPU_Slave_TypeDef bmp_slv;
+PID_TypeDef altitude_pid;
+int32_t temp_raw = 0;
+int32_t press_raw = 0;
+float pressure, temperature, altitude;
+
+//hmc data
+MPU_Slave_TypeDef hmc_slv;
+int16_t mag_x_raw = 0, mag_y_raw = 0, mag_z_raw = 0;
+float mag_x = 0, mag_y = 0, mag_z = 0;
+float hmc_output_scale = 1024.0; //1024 counts/Gauss 
+const float mag_offset_x = -0.04833999999999994;
+const float mag_offset_y = -0.00048800000000004395;
+const float mag_offset_z = -0.0449215;
+const float mag_scale_x = 0.9557852619889624;
+const float mag_scale_y = 1.0583403581326762;
+const float mag_scale_z = 0.9912136198171252;
+
+
 
 //usb buffer variables (unused)
 uint8_t usb_tx_buffer[256];
@@ -288,63 +349,6 @@ double map_with_midpoint(double input, double input_low, double input_mid, doubl
 	else if(input_mid <= input )
 		return map_v1(input, input_mid, input_high, output_mid, output_high);
 }
-//uint8_t mpu_register_read(uint8_t address){
-//	uint8_t txBuf[1] = {address};
-//	uint8_t status_w = HAL_I2C_Master_Transmit(&hi2c1, 0x68<<1, txBuf, 1, 100);//set pointer
-//	uint8_t status_r = HAL_I2C_Master_Receive(&hi2c1, 0x68<<1, rxBuffer, 1, 100);
-//	printf("StatusW: %i StatusR: %i\r\n", status_w, status_r);
-//	return rxBuffer[0];
-//}
-//void mpu_register_set(uint8_t address, uint8_t data){
-//	txBuffer[0] = address;
-//	txBuffer[1] = data;
-//	uint8_t status_w = HAL_I2C_Master_Transmit(&hi2c1, 0x68<<1, txBuffer, 2, 1000);
-//	printf("Status_W: %i Reg_cont: %i\n", status_w, mpu_register_read(address));
-//}
-
-//uint8_t mpu_register_set_new(uint8_t address, uint8_t data, uint8_t tries){
-//	uint8_t data_read;
-//	for(int i = 0; i<4; i++){
-//		txBuffer[0] = address;
-//		txBuffer[1] = data;
-//		if(HAL_I2C_Master_Transmit(&hi2c1, 0x68<<1, txBuffer, 2, 1000) != HAL_OK){
-//			printf("i2c tx error\r\n");
-//		}
-//		data_read = mpu_register_read(address);
-//		if(data_read == data){
-//			return HAL_OK;
-//		}
-//	}
-//	if(data_read != data){
-//			return HAL_ERROR;
-//	}
-//}
-
-
-//uint8_t bmp_register_read(uint8_t address){
-//	uint8_t txBuf[1] = {address};
-//	uint8_t status_w = HAL_I2C_Master_Transmit(&hi2c1, bmp_i2c_address<<1, txBuf, 1, 100);//set pointer
-//	uint8_t status_r = HAL_I2C_Master_Receive(&hi2c1, bmp_i2c_address<<1, rxBuffer, 1, 100);
-//	printf("StatusW: %i StatusR: %i\r\n", status_w, status_r);
-//	return rxBuffer[0];
-//}
-//uint8_t bmp_register_set_new(uint8_t address, uint8_t data, uint8_t tries){
-//	uint8_t data_read;
-//	for(int i = 0; i<4; i++){
-//		txBuffer[0] = address;
-//		txBuffer[1] = data;
-//		if(HAL_I2C_Master_Transmit(&hi2c1, bmp_i2c_address<<1, txBuffer, 2, 1000) != HAL_OK){
-//			printf("i2c tx error\r\n");
-//		}
-//		data_read = bmp_register_read(address);
-//		if(data_read == data){
-//			return HAL_OK;
-//		}
-//	}
-//	if(data_read != data){
-//			return HAL_ERROR;
-//	}
-//}
 HAL_StatusTypeDef i2c_device_register_set_verifiy(uint8_t i2c_address, uint8_t register_address, uint8_t data, uint8_t tries){
 	uint8_t data_read;
 	for(int i = 0; i<4; i++){
@@ -399,14 +403,16 @@ uint32_t compensate_press(int32_t adc_press,int32_t fine_temp) {
 	p = ((p + var1 + var2) >> 8) + ((int64_t) dig_P7 << 4);
 	return p;
 }
-Read_StatusTypedef mpu_read(void){
-
+void mpu_read(void){
 	txBuffer[0] = 0x3B;
-	HAL_StatusTypeDef status = HAL_I2C_Mem_Read(&hi2c1, mpu_i2c_address<<1, 0x3B, 1, rxBuffer, 20, 100);
+	HAL_StatusTypeDef status = HAL_I2C_Mem_Read(&hi2c1, mpu_i2c_address<<1, 0x3B, 1, rxBuffer, 26, 100);
 	/*HAL_I2C_Master_Transmit(&hi2c1, 0x68<<1, txBuffer, 1, 100);//set pointer
 	HAL_I2C_Master_Receive(&hi2c1, 0x68<<1, rxBuffer, 14, 100);//read all data registers*/
+	if(status == HAL_TIMEOUT)
+		status = HAL_ERROR;
 	if(status){
-		return Read_MPU_ERROR;
+		mpu_read_status.MPU_Status = (Read_StatusTypedef)status;
+		return;
 	}
 	//do timekeeping
 	for(int i = 0; i<7; i++){
@@ -419,30 +425,33 @@ Read_StatusTypedef mpu_read(void){
 	gyroX_raw = rawData[4];
 	gyroY_raw = rawData[5];
 	gyroZ_raw = rawData[6];
-	int32_t press_raw = rxBuffer[14]<<12/*msb*/ | rxBuffer[15]<<4 /*lsb*/ | rxBuffer[16]>>4; /*xlsb*/
-	int32_t temp_raw = rxBuffer[17]<<12/*msb*/ | rxBuffer[18]<<4 /*lsb*/ | rxBuffer[19]>>4; /*xlsb*/
+	mag_x_raw = rxBuffer[14] << 8 | rxBuffer[15];
+	mag_y_raw = rxBuffer[16] << 8 | rxBuffer[17];
+	mag_z_raw = rxBuffer[18] << 8 | rxBuffer[19];
+	press_raw = rxBuffer[20]<<12/*msb*/ | rxBuffer[21]<<4 /*lsb*/ | rxBuffer[22]>>4; /*xlsb*/
+	temp_raw = rxBuffer[23]<<12/*msb*/ | rxBuffer[24]<<4 /*lsb*/ | rxBuffer[25]>>4; /*xlsb*/
 	
 	//offset measurement
 	if(samples < 500) {
 			samples++;
-			offsetting = 1;
-			return Read_MPU_Offset_Measuring;
+			mpu_read_status.MPU_Status = Read_Offset_Measuring;
+			return;
 		} 
 		else if(samples < 1500) {
 			gyroX_Offset += (int32_t)gyroX_raw;
 			gyroY_Offset += (int32_t)gyroY_raw;
 			gyroZ_Offset += (int32_t)gyroZ_raw;
 			samples++;
-			offsetting = 1;
-			return Read_MPU_Offset_Measuring;
+			mpu_read_status.MPU_Status = Read_Offset_Measuring;
+			return;
 		}
 		/*else{
 			gyroX_Offset /= 1000;
 			gyroY_Offset /= 1000;
 			gyroZ_Offset /= 1000;
 		}*/
-		
-		offsetting = 0;
+				
+		//calculate raw acc and gyro values
 		gyroX_raw -= gyroX_Offset/1000;
 		gyroY_raw -= gyroY_Offset/1000;
 		gyroZ_raw -= gyroZ_Offset/1000;
@@ -453,7 +462,7 @@ Read_StatusTypedef mpu_read(void){
 		accY_raw = (accY_raw + accY_Offset)*accY_Scale;
 		accZ_raw = (accZ_raw + accZ_Offset)*accZ_Scale;
 		
-		
+		//calculate real acc and gyro values		
 		accX = ((float)accX_raw)/acc_sensitivity_scale_factor;
 		accY = ((float)accY_raw)/acc_sensitivity_scale_factor;
 		accZ = ((float)accZ_raw)/acc_sensitivity_scale_factor;
@@ -465,13 +474,14 @@ Read_StatusTypedef mpu_read(void){
 		gyroX_rad = gyroX * deg_to_rad;
 		gyroY_rad = gyroY * deg_to_rad;
 		gyroZ_rad = gyroZ * deg_to_rad;
+		mpu_read_status.MPU_Status = Read_OK;
 		
 		//declare temporary bmp variables 
 		int32_t fine_temp = 0;
 		int32_t fixed_temperature = 0;
 		uint32_t fixed_pressure= 0;
 		
-		//calculate temp and pressure		
+		//calculate temp and pressure and altitude (bmp)
 		fine_temp = 0;
 		fixed_temperature = compensate_temp(temp_raw, &fine_temp);
 		fixed_pressure = compensate_press(press_raw, fine_temp);
@@ -480,13 +490,21 @@ Read_StatusTypedef mpu_read(void){
 		pressure = (float) fixed_pressure / 256;
 		
 		if(pressure > 150000 || pressure < 20000 || temperature < -50 || temperature > 165){
-			return Read_BMP_BUSY;
+			mpu_read_status.BMP_Status = Read_Error;
 		}
-		
 
 		altitude = ((powf((sea_level_press/pressure), 0.1902225603956629)-1)*(temperature+273.15))*153.8461538461538;
-		return Read_OK;
 		
+		//magnetometer calculations
+		mag_x = ((mag_x_raw/hmc_output_scale) - mag_offset_x)*mag_scale_x;
+		mag_y = ((mag_y_raw/hmc_output_scale) - mag_offset_y)*mag_scale_y;
+		mag_z = ((mag_z_raw/hmc_output_scale) - mag_offset_z)*mag_scale_z;
+		//note: upon disconection from i2c bus, both bmp and hmc keep returning last updated values and do not hinder the working of the other sensor.
+		//Bmp does not get effected from vcc disconnect, however gnd disconnects and vcc disconnect to hmc require a restart to recover and hmc power fault hinders working of bmp as well
+		if(mag_x == 0 && mag_y == 0 && mag_z == 0)
+			mpu_read_status.HMC_Status = Read_Error;
+		else
+			mpu_read_status.HMC_Status = Read_OK;
 }	
 uint32_t microseconds(void){
 	return system_clock*1000 + ((SysTick->LOAD - SysTick->VAL)/72); //SYSTICK IS A DOWN COUNTER; CHANGE!!!!
@@ -775,99 +793,6 @@ void time_stamps_print(uint16_t last_timestamp){
 	}
 	printf("\n");
 }
-//void mpu_setup(void){
-//	HAL_Delay(100);
-//	uint8_t error = mpu_register_set_new(0x6B,0x0, 2); //Power Management 1
-//	uint8_t mpu_status = HAL_I2C_IsDeviceReady(&hi2c1, mpu_i2c_address<<1, 5, 50);
-//	if(mpu_status == HAL_OK){
-//		error |= mpu_register_set_new(0x19,15, 2); //Sample rate divider
-//		error |= mpu_register_set_new(0x1A,0x0, 2); //DLPF Config
-//  	error |= mpu_register_set_new(0x1B,3<<3, 2); //Gyro Config (2000 d)
-//  	error |= mpu_register_set_new(0x1C,3<<3, 2); //Acc Config	(16 g)
-//    error |= mpu_register_set_new(56,1, 2); //Interrupt Config
-//		error |= mpu_register_set_new(106,0, 2); //Aux i2c master off
-//		error |= mpu_register_set_new(55,2, 2); //Aux i2c passthrough enable
-//	}
-//	else{
-//		printf("\nError at mpu connection: %i\n", mpu_status);
-//		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-//		HAL_Delay(100);
-//		//HAL_NVIC_SystemReset();
-//		while(1);
-//	}
-//	if(error != HAL_OK){
-//		printf("\nError at mpu setup: %i\n", error);
-//		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-//		HAL_Delay(100);
-//		//HAL_NVIC_SystemReset();
-//	}
-//	else{
-//		printf("Setup successful!\n");
-//	}
-
-//}
-//void bmp_setup(void){
-//	HAL_Delay(100);
-//	//uint8_t error = mpu_register_set_new(0x6B,0x0, 2); //Power Management 1
-//	uint8_t error = HAL_OK;
-//	uint8_t bmp_status = HAL_I2C_IsDeviceReady(&hi2c1, bmp_i2c_address<<1, 5, 50);
-//	if(bmp_status == HAL_OK){
-//		error |= bmp_register_set_new(0xF4,87, 2); /*Pressure (x16), temperature(x2) oversampling rates and mode(normal) setup*/
-//		//uint8_t payload = 2<<5 | 5<<2 | 3;
-//		//error |= bmp_register_set_new(0xF4,payload, 2); /*Pressure (x16), temperature(x2) oversampling rates and mode(normal) setup*/
-//		error |= bmp_register_set_new(0xF5,4<<2, 2); //iir filter coefficent 16
-//		
-//	}
-//	else{
-//		printf("\nError at bmp connection: %i\n", bmp_status);
-//		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-//		HAL_Delay(100);
-//		//HAL_NVIC_SystemReset();
-//		while(1);
-//	}
-//	if(error != HAL_OK){
-//		printf("\nError at bmp setup: %i\n", error);
-//		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-//		HAL_Delay(100);
-//		//HAL_NVIC_SystemReset();
-//	}
-//	else{
-//		printf("BMP setup successful!\n");
-//	}
-
-//}
-
-//void mpu_slave_setup(void){
-//	HAL_StatusTypeDef error = HAL_OK;
-//	uint8_t mpu_status = HAL_I2C_IsDeviceReady(&hi2c1, mpu_i2c_address<<1, 5, 50);
-//	if(mpu_status == HAL_OK){
-//    //error |= mpu_register_set_new(56,1, 2); //Interrupt Config (maybe add slave interrupts)
-//		error |= mpu_register_set_new(52,9, 2); //reduces slave access rate to 1/(1+9) samples (normal sample rate/10 = 50hz)
-//		error |= mpu_register_set_new(103,1, 2); //slave 0 reduced access speed
-//		error |= mpu_register_set_new(36,13, 2); //Aux i2c master setup
-//		
-//		//slave 0 (bmp280) setup
-//		error |= mpu_register_set_new(37, 1<<7 | bmp_i2c_address, 2); //slave 0 address and read bit set
-//		error |= mpu_register_set_new(38,0xF7, 2); //slave 0 regiser address set
-//		error |= mpu_register_set_new(39,1<<7 | 6, 2); //slave 0 enable and bytes to read are set
-//		
-//		error |= mpu_register_set_new(55,0, 2); //Aux i2c passthrough disable
-//		error |= mpu_register_set_new(106,32, 2); //Aux i2c master on
-//		
-//		}
-//	else{
-//		printf("\nError at bmp slave setup: %i\n", mpu_status);
-//	}
-//	if(error != HAL_OK){
-//		printf("\nError at mpu slave setup: %i\n", error);
-//		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-//		HAL_Delay(100);
-//		//HAL_NVIC_SystemReset();
-//	}
-//	else{
-//		printf("Mpu slave setup successful!\n");
-//	}
-//}
 void mpu_setup(void){
 	HAL_Delay(100);
 	uint8_t error = i2c_device_register_set_verifiy(mpu_i2c_address,0x6B,0x0, 2); //Power Management 1
@@ -930,32 +855,72 @@ void bmp_setup(void){
 
 }
 
-void mpu_slave_setup(void){
+void hmc_setup(void){
+	uint8_t error = HAL_OK;
+	uint8_t bmp_status = HAL_I2C_IsDeviceReady(&hi2c1, hmc_i2c_address<<1, 5, 50);
+	if(bmp_status == HAL_OK){
+		error |= i2c_device_register_set_verifiy(hmc_i2c_address, 0, 0x6<<2, 2); /*75 hz data output rate*/
+		error |= i2c_device_register_set_verifiy(hmc_i2c_address, 1, 0x1<<2, 2); /*1024 counts/Gauss +- 1.2 Gauss accuracy*/
+		error |= i2c_device_register_set_verifiy(hmc_i2c_address, 2, 0, 2); /*continous measurement mode*/
+	}
+	else{
+		printf("\nError at hmc connection: %i\n", bmp_status);
+		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
+		HAL_Delay(100);
+		//HAL_NVIC_SystemReset();
+	}
+	if(error != HAL_OK){
+		printf("\nError at hmc setup: %i\n", error);
+		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
+		HAL_Delay(100);
+		//HAL_NVIC_SystemReset();
+	}
+	else{
+		printf("HMC setup successful!\n");
+	}
+}
+HAL_StatusTypeDef MPU_Slave_Setup(I2C_HandleTypeDef *hi2c, MPU_Slave_TypeDef *slave){
+	uint8_t error = HAL_OK;
+	uint8_t mpu_status = HAL_I2C_IsDeviceReady(hi2c, mpu_i2c_address<<1, 5, 50);
+	uint8_t Config_Data[3];
+
+	Config_Data[0] = slave->RW<<7 | slave->Periph_Address;
+	Config_Data[1] = slave->Register_Address;
+	Config_Data[2] = slave->Slave_Enable<<7 | slave->Byte_Swapping<<6 | slave->REG_DIS<<5 | slave->Byte_Grouping<<4 | slave->Transfer_Length;
+	
+	if(mpu_status == HAL_OK){
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address, 37 + 3*slave->Slave_Number, Config_Data[0], 2);
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address, 38 + 3*slave->Slave_Number, Config_Data[1], 2); 
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address, 39 + 3*slave->Slave_Number, Config_Data[2], 2);
+	}
+	else{
+		printf("\nError at mpu connection: %i\n", mpu_status);
+	}
+	if(error != HAL_OK){
+		printf("\nError at slave %i setup: %i\n", slave->Slave_Number, error);
+	}
+	else{
+		printf("Slave %i setup successful!\n", slave->Slave_Number);
+	}
+}
+void mpu_master_setup(void){
 	HAL_StatusTypeDef error = HAL_OK;
 	uint8_t mpu_status = HAL_I2C_IsDeviceReady(&hi2c1, mpu_i2c_address<<1, 5, 50);
 	if(mpu_status == HAL_OK){
     //error |= mpu_register_set_new(56,1, 2); //Interrupt Config (maybe add slave interrupts)
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,52,9, 2); //reduces slave access rate to 1/(1+9) samples (normal sample rate/10 = 50hz)
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,103,1, 2); //slave 0 reduced access speed
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address,52,5, 2); //reduces slave access rate to 1/(1+5) samples (normal sample rate/6 = 83.33 hz)
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address,103,1<<1 | 1, 2); //slave 0 and 1 reduced access speed
 		error |= i2c_device_register_set_verifiy(mpu_i2c_address,36,13, 2); //Aux i2c master setup
-		
-		//slave 0 (bmp280) setup
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,37, 1<<7 | bmp_i2c_address, 2); //slave 0 address and read bit set
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,38,0xF7, 2); //slave 0 regiser address set
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,39,1<<7 | 6, 2); //slave 0 enable and bytes to read are set
-		
+	
 		error |= i2c_device_register_set_verifiy(mpu_i2c_address,55,0, 2); //Aux i2c passthrough disable
 		error |= i2c_device_register_set_verifiy(mpu_i2c_address,106,32, 2); //Aux i2c master on
-		
-		}
+	}
 	else{
 		printf("\nError at bmp slave setup: %i\n", mpu_status);
 	}
 	if(error != HAL_OK){
 		printf("\nError at mpu slave setup: %i\n", error);
 		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-		HAL_Delay(100);
-		//HAL_NVIC_SystemReset();
 	}
 	else{
 		printf("Mpu slave setup successful!\n");
@@ -981,35 +946,7 @@ void bmp_read_calib(void){
 }	
 
 
-//void mpu_setup_old(void){
-//	HAL_Delay(100);
-//	uint8_t error = i2c_device_register_set_verifiy(mpu_i2c_address,0x6B,0x0, 2); //Power Management 1
-//	uint8_t mpu_status = HAL_I2C_IsDeviceReady(&hi2c1, 0x68<<1, 5, 50);
-//	if(mpu_status == HAL_OK){
-//		error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x19,15, 2); //Sample rate divider
-//		error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x1A,0x0, 2); //DLPF Config
-//  	error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x1B,3<<3, 2); //Gyro Config (2000 d)
-//  	error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x1C,3<<3, 2); //Acc Config	(16 g)
-//    error |= i2c_device_register_set_verifiy(mpu_i2c_address,56,1, 2); //Interrupt Config
-//	}
-//	else{
-//		printf("\nError at connection: %i\n", mpu_status);
-//		failsafe = 1;
-//		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-//		HAL_Delay(100);
-//		HAL_NVIC_SystemReset();
-//	}
-//	if(error != HAL_OK){
-//		printf("\nError at setup: %i\n", error);
-//		failsafe = 1;
-//		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-//		HAL_Delay(100);
-//		HAL_NVIC_SystemReset();
-//	}
-//	else{
-//		printf("Setup successful!\n");
-//	}
-//}
+
 
 /* USER CODE END 0 */
 
@@ -1052,6 +989,7 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 	
+	
 	//set_pid_constants
 	pitch_pid.p = pKp;
 	pitch_pid.i = pKi;
@@ -1073,11 +1011,36 @@ int main(void)
 	yaw_pid.i_range = pid_i_range;
 
 
+
+	//hmc slave typedef setup
+	hmc_slv.Slave_Number = MPU_Slave_Number_0;
+	hmc_slv.Byte_Grouping = MPU_Slave_Byte_Grouping_Default;
+	hmc_slv.Byte_Swapping = MPU_Slave_Byte_Swapping_Default;
+	hmc_slv.Periph_Address = hmc_i2c_address;
+	hmc_slv.Register_Address = 0x3;
+	hmc_slv.REG_DIS = MPU_Slave_REG_DIS_Default;
+	hmc_slv.RW = MPU_Slave_RW_Read;
+	hmc_slv.Slave_Enable = MPU_Slave_Enable;
+	hmc_slv.Transfer_Length = 6;
+	
+	
+	//bmp slave typedef setup
+	bmp_slv.Slave_Number = MPU_Slave_Number_1;
+	bmp_slv.Byte_Grouping = MPU_Slave_Byte_Grouping_Default;
+	bmp_slv.Byte_Swapping = MPU_Slave_Byte_Swapping_Default;
+	bmp_slv.Periph_Address = bmp_i2c_address;
+	bmp_slv.Register_Address = 0xF7;
+	bmp_slv.REG_DIS = MPU_Slave_REG_DIS_Default;
+	bmp_slv.RW = MPU_Slave_RW_Read;
+	bmp_slv.Slave_Enable = MPU_Slave_Enable;
+	bmp_slv.Transfer_Length = 6;
+
 	
 	  SysTick_Config(SystemCoreClock/1000);//set systick up
 //		mpu_register_set_new(0x19,15); //Sample rate divider
 //		while(true)
 //			printf("%i ", mpu_register_read(117));		
+
 		//timer start
 		HAL_TIM_PWM_Start(&MOTOR_TIMER,TIM_CHANNEL_1);
 		HAL_TIM_PWM_Start(&MOTOR_TIMER,TIM_CHANNEL_2);
@@ -1090,9 +1053,14 @@ int main(void)
 		loop2_last = microseconds();
 
 		mpu_setup();
+		hmc_setup();
 		bmp_setup();
 		bmp_read_calib();
-		mpu_slave_setup();
+		//set bmp280 as slave 0
+		MPU_Slave_Setup(&hi2c1, &hmc_slv);
+		MPU_Slave_Setup(&hi2c1, &bmp_slv);
+		//mpu master setup
+		mpu_master_setup();
   /* USER CODE END 2 */
  
  
@@ -1114,7 +1082,7 @@ int main(void)
 			
 			time_stamps[1] = microseconds();
 			
-			if(offsetting == 0){
+			if(mpu_read_status.MPU_Status == Read_OK){
 				MadgwickAHRSupdateIMU(gyroX_rad, gyroY_rad, gyroZ_rad, accX, accY, accZ);//unoptimisable
 			}
 //			this_time = microseconds();

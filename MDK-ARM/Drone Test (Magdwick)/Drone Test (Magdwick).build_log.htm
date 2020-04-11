@@ -27,7 +27,18 @@ Project File Date:  03/19/2020
 <h2>Output:</h2>
 *** Using Compiler 'V5.06 update 6 (build 750)', folder: 'D:\Keil_v5\ARM\ARMCC\Bin'
 Build target 'Drone Test (Magdwick)'
-"Drone Test (Magdwick)\Drone Test (Magdwick).axf" - 0 Error(s), 0 Warning(s).
+compiling main.c...
+../Src/main.c(351): warning:  #940-D: missing return statement at end of non-void function "map_with_midpoint" 
+  }
+../Src/main.c(369): warning:  #940-D: missing return statement at end of non-void function "i2c_device_register_set_verifiy" 
+  }
+../Src/main.c(905): warning:  #940-D: missing return statement at end of non-void function "MPU_Slave_Setup" 
+  }
+../Src/main.c: 3 warnings, 0 errors
+linking...
+Program Size: Code=26592 RO-data=856 RW-data=520 ZI-data=1920  
+FromELF: creating hex file...
+"Drone Test (Magdwick)\Drone Test (Magdwick).axf" - 0 Error(s), 3 Warning(s).
 
 <h2>Software Packages used:</h2>
 
@@ -50,7 +61,7 @@ Package Vendor: Keil
 <h2>Collection of Component Files used:</h2>
 
    * Component: ARM::CMSIS:CORE:5.1.2
-Build Time Elapsed:  00:00:00
+Build Time Elapsed:  00:00:02
 </pre>
 </body>
 </html>
