@@ -54,8 +54,9 @@
 /* USER CODE BEGIN 0 */
 #include "math.h"
 extern _Bool nrf24_available;
-extern uint32_t last_signal;
 extern _Bool new_data;
+extern _Bool receiver_signal_loss;
+extern uint32_t last_signal_micros;
 extern unsigned long reading_elapsed_time;
 extern unsigned long reading_last_time;
 extern uint32_t reading_count;
@@ -254,11 +255,14 @@ void TIM1_CC_IRQHandler(void)
   /* USER CODE END TIM1_CC_IRQn 0 */
   HAL_TIM_IRQHandler(&htim1);
   /* USER CODE BEGIN TIM1_CC_IRQn 1 */
+	last_signal_micros = microseconds();
 	if(inputCapture > 3000){
 		ch_count = 0;
+		receiver_signal_loss = 0;
 		return;
 	}
-	else if(ch_count<8){
+	
+	if(ch_count<8){
 		
 		
 		//without filter
@@ -276,10 +280,9 @@ void TIM1_CC_IRQHandler(void)
 		
 		ch_count++;
 	}
-	else if(ch_count == 9){
+	else if(ch_count == 8){
 		return;
 	}
-	last_signal = microseconds();
   /* USER CODE END TIM1_CC_IRQn 1 */
 }
 
