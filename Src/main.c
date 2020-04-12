@@ -79,28 +79,23 @@ typedef struct{
 	uint8_t Transfer_Length; //Specifies the number of bytes transferred to and from slave
 }MPU_Slave_TypeDef;
 
-//typedef enum
-//{
-//  Read_OK = 0x00U, //everything ok
-//  Read_MPU_ERROR = 0x01U, //fatal error, cant reach mpu
-//  Read_BMP_ERROR = 0x02U, //cant reach bmp
-//	Read_BMP_BUSY = 0x03U, //mpu reading from bmp
-//	Read_MPU_Offset_Measuring = 0x04U //mpu is offsetting
-//} Read_StatusTypedef;
 typedef enum
 {
-  Read_OK = 0x00U, //everything ok
-  Read_Error = 0x01U, //fatal error, cant reach mpu
-	Read_Busy = 0x02U, //fatal error, cant reach mpu
-	Read_Offset_Measuring = 0x03U, //mpu is offsetting
-} Read_StatusTypedef;
+  Sensor_Read_OK = 0x00U, //everything ok
+  Sensor_Read_Error = 0x01U, //fatal error, cant reach sensor
+	Sensor_Read_Busy = 0x02U, //fatal error, cant reach sensor
+	Sensor_Offset_Measuring = 0x03U, //sensor is offsetting
+} Sensor_StatusTypedef;
 
 typedef struct
 {
-  Read_StatusTypedef MPU_Status;
-	Read_StatusTypedef BMP_Status;
-	Read_StatusTypedef HMC_Status;
-} Read_ReturnTypedef;
+  Sensor_StatusTypedef MPU_Status;
+  HAL_StatusTypeDef MPU_Setup_Status;
+	Sensor_StatusTypedef BMP_Status;
+	HAL_StatusTypeDef BMP_Setup_Status;
+	Sensor_StatusTypedef HMC_Status;
+	HAL_StatusTypeDef HMC_Setup_Status;
+} Sensor_ReturnTypedef;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -131,6 +126,8 @@ typedef struct
 
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
+DMA_HandleTypeDef hdma_i2c1_rx;
+DMA_HandleTypeDef hdma_i2c1_tx;
 
 SPI_HandleTypeDef hspi2;
 
@@ -154,13 +151,15 @@ UART_HandleTypeDef huart3;
 
 
 _Bool new_data = 0;
+_Bool dma_new_receive = 0;
 //I2C Variables
 uint8_t txBuffer[2];
 uint8_t rxBuffer[30];
+uint8_t mpu_rx_buffer[26];
 int16_t rawData[7];
 
 //Mpu data storage variables
-Read_ReturnTypedef mpu_read_status;
+Sensor_ReturnTypedef sensor_status;
 float accX, accY, accZ, temp, gyroX, gyroY, gyroZ, gyroX_rad, gyroY_rad, gyroZ_rad; //raw usable data
 float accX_raw, accY_raw, accZ_raw, gyroX_raw, gyroY_raw, gyroZ_raw;
 float roll, pitch, yaw;
@@ -224,8 +223,8 @@ uint32_t ch_count = 9;
 const uint16_t reciever_low = 996, reciever_mid = 1502, reciever_high = 2016;
 
 //general reciever variables
-double receiver_beta = 0.05;//WIP
-double rollIn, pitchIn, yawIn, throttleIn;
+float receiver_beta = 0.05;//WIP
+float rollIn, pitchIn, yawIn, throttleIn;
 uint32_t last_signal_micros;
 _Bool receiver_signal_loss = 0;
 
@@ -240,17 +239,17 @@ _Bool receiver_signal_loss = 0;
 //roll_pid, yaw_pid;
 PID_TypeDef pitch_pid, roll_pid, yaw_pid;
 #define pM 0.5 //0.5
-double pKp = 1.5*pM, pKi = 1.5*pM, pKd = 0.5*pM;//1.5 1.5  0.5 (tweak i) (throttle and sticks a bit twitchy)
-double rKp = 1.5*pM, rKi = 1.5*pM, rKd = 0.5*pM;
-double yKp = 1*pM, yKi = 0.5*pM, yKd = 0*pM;//1 0.5 0 (tweak i)
-double tpa_pid_p = 0.14; //reduces pid_p value as throttle increases (0.14)
-double pitch_pid_output, roll_pid_output, yaw_pid_output;
+float pKp = 1.5*pM, pKi = 1.5*pM, pKd = 0.5*pM;//1.5 1.5  0.5 (tweak i) (throttle and sticks a bit twitchy)
+float rKp = 1.5*pM, rKi = 1.5*pM, rKd = 0.5*pM;
+float yKp = 1*pM, yKi = 0.5*pM, yKd = 0*pM;//1 0.5 0 (tweak i)
+float tpa_pid_p = 0.14; //reduces pid_p value as throttle increases (0.14)
+float pitch_pid_output, roll_pid_output, yaw_pid_output;
 #define pid_i_range 10 //10
 
 //Motor variables (ported from "Drone Test")
-double motorTR, motorBR, motorBL, motorTL;
-const double servo_low = 18000;
-const double servo_high = 36000;
+float motorTR, motorBR, motorBL, motorTL;
+const float servo_low = 18000;
+const float servo_high = 36000;
 bool failsafe = 0;
 
 
@@ -299,6 +298,7 @@ uint16_t usb_tx_len;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_SPI2_Init(void);
@@ -333,7 +333,7 @@ PUTCHAR_PROTOTYPE{
 //	//CDC_Transmit_FS((uint8_t*)&ch, 1);
 //	return ch;
 //}
-double map_v1(double input, double input_low, double input_high, double output_low, double output_high){
+float map_v1(float input, float input_low, float input_high, float output_low, float output_high){
 	/*if(input<input_low){
 		input = input_low;
 	}
@@ -342,28 +342,26 @@ double map_v1(double input, double input_low, double input_high, double output_l
 	}*/
 	return (((input-input_low)/(input_high-input_low))*(output_high-output_low))+output_low;
 }
-double map_with_midpoint(double input, double input_low, double input_mid, double input_high, double output_low, double output_high){
-	double output_mid = (output_high + output_low)/2;
+float map_with_midpoint(float input, float input_low, float input_mid, float input_high, float output_low, float output_high){
+	float output_mid = (output_high + output_low)/2;
 	if(input < input_mid)
 		return map_v1(input, input_low, input_mid, output_low, output_mid);
 	else if(input_mid <= input )
 		return map_v1(input, input_mid, input_high, output_mid, output_high);
 }
 HAL_StatusTypeDef i2c_device_register_set_verifiy(uint8_t i2c_address, uint8_t register_address, uint8_t data, uint8_t tries){
-	uint8_t data_read;
-	for(int i = 0; i<4; i++){
-		txBuffer[0] = register_address;
-		txBuffer[1] = data;
-		if(HAL_I2C_Master_Transmit(&hi2c1, i2c_address<<1, txBuffer, 2, 1000) != HAL_OK){
+	uint8_t data_read[1];
+	for(int i = 0; i<tries; i++){
+		if(HAL_I2C_Mem_Write(&hi2c1, i2c_address<<1, register_address, 1, &data, 1, 100) != HAL_OK){
 			printf("i2c tx error\r\n");
 		}
-		HAL_StatusTypeDef status_rw = HAL_I2C_Mem_Read(&hi2c1, i2c_address<<1, register_address, 1, rxBuffer, 1, 100);
-		printf("Status: %i, address: %i, data: %i\r\n", status_rw, register_address, rxBuffer[0]);
-		if(rxBuffer[0] == data){
+		HAL_StatusTypeDef status_rw = HAL_I2C_Mem_Read(&hi2c1, i2c_address<<1, register_address, 1, data_read, 1, 100);
+		printf("Status: %i, address: %i, data at the address: %i\r\n", status_rw, register_address, data_read[0]);
+		if(data_read[0] == data){
 			return HAL_OK;
 		}
 	}
-	if(data_read != data){
+	if(data_read[0] != data){
 			return HAL_ERROR;
 	}
 }
@@ -404,19 +402,18 @@ uint32_t compensate_press(int32_t adc_press,int32_t fine_temp) {
 	return p;
 }
 void mpu_read(void){
-	txBuffer[0] = 0x3B;
-	HAL_StatusTypeDef status = HAL_I2C_Mem_Read(&hi2c1, mpu_i2c_address<<1, 0x3B, 1, rxBuffer, 26, 100);
-	/*HAL_I2C_Master_Transmit(&hi2c1, 0x68<<1, txBuffer, 1, 100);//set pointer
-	HAL_I2C_Master_Receive(&hi2c1, 0x68<<1, rxBuffer, 14, 100);//read all data registers*/
-	if(status == HAL_TIMEOUT)
-		status = HAL_ERROR;
-	if(status){
-		mpu_read_status.MPU_Status = (Read_StatusTypedef)status;
-		return;
-	}
+//	if(sensor_status.MPU_Setup_Status == HAL_OK){
+//		txBuffer[0] = 0x3B;
+//		HAL_StatusTypeDef status = HAL_I2C_Mem_Read(&hi2c1, mpu_i2c_address<<1, 0x3B, 1, mpu_rx_buffer, 26, 100);
+//		if(status == HAL_TIMEOUT)
+//			status = HAL_ERROR;
+//		if(status){
+//			sensor_status.MPU_Status = (Sensor_StatusTypedef)status;
+//		}
+//	}
 	//do timekeeping
 	for(int i = 0; i<7; i++){
-	rawData[i] = rxBuffer[i*2]<<8 | rxBuffer[(i*2)+1]; //combine bytes into raw measurements
+	rawData[i] = mpu_rx_buffer[i*2]<<8 | mpu_rx_buffer[(i*2)+1]; //combine bytes into raw measurements
 	}
 	//calculate readable raw data
 	accX_raw = rawData[0];
@@ -425,16 +422,16 @@ void mpu_read(void){
 	gyroX_raw = rawData[4];
 	gyroY_raw = rawData[5];
 	gyroZ_raw = rawData[6];
-	mag_x_raw = rxBuffer[14] << 8 | rxBuffer[15];
-	mag_y_raw = rxBuffer[16] << 8 | rxBuffer[17];
-	mag_z_raw = rxBuffer[18] << 8 | rxBuffer[19];
-	press_raw = rxBuffer[20]<<12/*msb*/ | rxBuffer[21]<<4 /*lsb*/ | rxBuffer[22]>>4; /*xlsb*/
-	temp_raw = rxBuffer[23]<<12/*msb*/ | rxBuffer[24]<<4 /*lsb*/ | rxBuffer[25]>>4; /*xlsb*/
+	mag_x_raw = mpu_rx_buffer[14] << 8 | mpu_rx_buffer[15];
+	mag_y_raw = mpu_rx_buffer[16] << 8 | mpu_rx_buffer[17];
+	mag_z_raw = mpu_rx_buffer[18] << 8 | mpu_rx_buffer[19];
+	press_raw = mpu_rx_buffer[20]<<12/*msb*/ | mpu_rx_buffer[21]<<4 /*lsb*/ | mpu_rx_buffer[22]>>4; /*xlsb*/
+	temp_raw = mpu_rx_buffer[23]<<12/*msb*/ | mpu_rx_buffer[24]<<4 /*lsb*/ | mpu_rx_buffer[25]>>4; /*xlsb*/
 	
 	//offset measurement
 	if(samples < 500) {
 			samples++;
-			mpu_read_status.MPU_Status = Read_Offset_Measuring;
+			sensor_status.MPU_Status = Sensor_Offset_Measuring;
 			return;
 		} 
 		else if(samples < 1500) {
@@ -442,7 +439,7 @@ void mpu_read(void){
 			gyroY_Offset += (int32_t)gyroY_raw;
 			gyroZ_Offset += (int32_t)gyroZ_raw;
 			samples++;
-			mpu_read_status.MPU_Status = Read_Offset_Measuring;
+			sensor_status.MPU_Status = Sensor_Offset_Measuring;
 			return;
 		}
 		/*else{
@@ -474,7 +471,7 @@ void mpu_read(void){
 		gyroX_rad = gyroX * deg_to_rad;
 		gyroY_rad = gyroY * deg_to_rad;
 		gyroZ_rad = gyroZ * deg_to_rad;
-		mpu_read_status.MPU_Status = Read_OK;
+		sensor_status.MPU_Status = Sensor_Read_OK;
 		
 		//declare temporary bmp variables 
 		int32_t fine_temp = 0;
@@ -490,7 +487,7 @@ void mpu_read(void){
 		pressure = (float) fixed_pressure / 256;
 		
 		if(pressure > 150000 || pressure < 20000 || temperature < -50 || temperature > 165){
-			mpu_read_status.BMP_Status = Read_Error;
+			sensor_status.BMP_Status = Sensor_Read_Error;
 		}
 
 		altitude = ((powf((sea_level_press/pressure), 0.1902225603956629)-1)*(temperature+273.15))*153.8461538461538;
@@ -502,9 +499,9 @@ void mpu_read(void){
 		//note: upon disconection from i2c bus, both bmp and hmc keep returning last updated values and do not hinder the working of the other sensor.
 		//Bmp does not get effected from vcc disconnect, however gnd disconnects and vcc disconnect to hmc require a restart to recover and hmc power fault hinders working of bmp as well
 		if(mag_x == 0 && mag_y == 0 && mag_z == 0)
-			mpu_read_status.HMC_Status = Read_Error;
+			sensor_status.HMC_Status = Sensor_Read_Error;
 		else
-			mpu_read_status.HMC_Status = Read_OK;
+			sensor_status.HMC_Status = Sensor_Read_OK;
 }	
 uint32_t microseconds(void){
 	return system_clock*1000 + ((SysTick->LOAD - SysTick->VAL)/72); //SYSTICK IS A DOWN COUNTER; CHANGE!!!!
@@ -762,10 +759,10 @@ void motor_signal_set(bool failsf){
 void map_reciever_inputs(){	
 	
 	//WIP Low pass filter
-	double rollIn_raw     = map_with_midpoint((double)rollIn_ch, reciever_low, reciever_mid, reciever_high, -roll_pitch_bankAng_max,  roll_pitch_bankAng_max);
-	double pitchIn_raw    = -map_with_midpoint((double)pitchIn_ch, reciever_low, reciever_mid, reciever_high, -roll_pitch_bankAng_max,  roll_pitch_bankAng_max);
-	double yawIn_raw      = -map_with_midpoint((double)yawIn_ch, reciever_low, reciever_mid, reciever_high, -yaw_max_degPsec,  yaw_max_degPsec);
-	double throttleIn_raw = map_with_midpoint((double)throttleIn_ch, reciever_low, reciever_mid, reciever_high,   0.0f, 180.0f);
+	float rollIn_raw     = map_with_midpoint((float)rollIn_ch, reciever_low, reciever_mid, reciever_high, -roll_pitch_bankAng_max,  roll_pitch_bankAng_max);
+	float pitchIn_raw    = -map_with_midpoint((float)pitchIn_ch, reciever_low, reciever_mid, reciever_high, -roll_pitch_bankAng_max,  roll_pitch_bankAng_max);
+	float yawIn_raw      = -map_with_midpoint((float)yawIn_ch, reciever_low, reciever_mid, reciever_high, -yaw_max_degPsec,  yaw_max_degPsec);
+	float throttleIn_raw = map_with_midpoint((float)throttleIn_ch, reciever_low, reciever_mid, reciever_high,   0.0f, 180.0f);
 	
 	rollIn = rollIn_raw;
 	pitchIn = pitchIn_raw;
@@ -793,95 +790,82 @@ void time_stamps_print(uint16_t last_timestamp){
 	}
 	printf("\n");
 }
-void mpu_setup(void){
-	HAL_Delay(100);
-	uint8_t error = i2c_device_register_set_verifiy(mpu_i2c_address,0x6B,0x0, 2); //Power Management 1
-	uint8_t mpu_status = HAL_I2C_IsDeviceReady(&hi2c1, mpu_i2c_address<<1, 5, 50);
+HAL_StatusTypeDef mpu_setup(void){
+	uint8_t mpu_status = HAL_I2C_IsDeviceReady(&hi2c1, mpu_i2c_address<<1, 10, 100);
+	HAL_StatusTypeDef error = 0;
 	if(mpu_status == HAL_OK){
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x19,15, 2); //Sample rate divider
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x1A,0x0, 2); //DLPF Config
-  	error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x1B,3<<3, 2); //Gyro Config (2000 d)
-  	error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x1C,3<<3, 2); //Acc Config	(16 g)
-    error |= i2c_device_register_set_verifiy(mpu_i2c_address,56,1, 2); //Interrupt Config
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,106,0, 2); //Aux i2c master off
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,55,2, 2); //Aux i2c passthrough enable
+		error = i2c_device_register_set_verifiy(mpu_i2c_address,0x6B,0x0, 5); //Power Management 1
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x19,15, 5); //Sample rate divider
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x1A,0x0, 5); //DLPF Config
+  	error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x1B,3<<3, 5); //Gyro Config (2000 d)
+  	error |= i2c_device_register_set_verifiy(mpu_i2c_address,0x1C,3<<3, 5); //Acc Config	(16 g)
+    error |= i2c_device_register_set_verifiy(mpu_i2c_address,56,1, 5); //Interrupt Config
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address,106,0, 5); //Aux i2c master off
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address,55,2, 5); //Aux i2c passthrough enable
 	}
 	else{
-		printf("\nError at mpu connection: %i\n", mpu_status);
-		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-		HAL_Delay(100);
-		//HAL_NVIC_SystemReset();
-		while(1);
+		printf("\nMPU Setup: Error at mpu connection: %i\n", mpu_status);
+		return mpu_status;
 	}
 	if(error != HAL_OK){
-		printf("\nError at mpu setup: %i\n", error);
-		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-		HAL_Delay(100);
-		//HAL_NVIC_SystemReset();
+		printf("\nMPU Setup: Error at mpu setup: %i\n", error);
+		return error;
 	}
 	else{
-		printf("Setup successful!\n");
+		printf("MPU Setup successful!\n");
+		return HAL_OK;
 	}
 
 }
-void bmp_setup(void){
-	HAL_Delay(100);
-	//uint8_t error = mpu_register_set_new(0x6B,0x0, 2); //Power Management 1
-	uint8_t error = HAL_OK;
-	uint8_t bmp_status = HAL_I2C_IsDeviceReady(&hi2c1, bmp_i2c_address<<1, 5, 50);
+HAL_StatusTypeDef bmp_setup(void){
+	HAL_StatusTypeDef error = HAL_OK;
+	HAL_StatusTypeDef bmp_status = HAL_I2C_IsDeviceReady(&hi2c1, bmp_i2c_address<<1, 10, 100);
 	if(bmp_status == HAL_OK){
-		error |= i2c_device_register_set_verifiy(bmp_i2c_address, 0xF4,87, 2); /*Pressure (x16), temperature(x2) oversampling rates and mode(normal) setup*/
+		error |= i2c_device_register_set_verifiy(bmp_i2c_address, 0xF4,87, 5); /*Pressure (x16), temperature(x2) oversampling rates and mode(normal) setup*/
 		//uint8_t payload = 2<<5 | 5<<2 | 3;
 		//error |= bmp_register_set_new(0xF4,payload, 2); /*Pressure (x16), temperature(x2) oversampling rates and mode(normal) setup*/
-		error |= i2c_device_register_set_verifiy(bmp_i2c_address, 0xF5,4<<2, 2); //iir filter coefficent 16
+		error |= i2c_device_register_set_verifiy(bmp_i2c_address, 0xF5,4<<2, 5); //iir filter coefficent 16
 		
 	}
 	else{
-		printf("\nError at bmp connection: %i\n", bmp_status);
-		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-		HAL_Delay(100);
-		//HAL_NVIC_SystemReset();
-		while(1);
+		printf("\nBMP setup: Error at bmp connection: %i\n", bmp_status);
+		return bmp_status;
 	}
 	if(error != HAL_OK){
-		printf("\nError at bmp setup: %i\n", error);
-		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-		HAL_Delay(100);
-		//HAL_NVIC_SystemReset();
+		printf("\nBMP setup: Error at bmp setup: %i\n", error);
+		return error;
 	}
 	else{
 		printf("BMP setup successful!\n");
+		return HAL_OK;
 	}
 
 }
 
-void hmc_setup(void){
-	uint8_t error = HAL_OK;
-	uint8_t bmp_status = HAL_I2C_IsDeviceReady(&hi2c1, hmc_i2c_address<<1, 5, 50);
-	if(bmp_status == HAL_OK){
-		error |= i2c_device_register_set_verifiy(hmc_i2c_address, 0, 0x6<<2, 2); /*75 hz data output rate*/
-		error |= i2c_device_register_set_verifiy(hmc_i2c_address, 1, 0x1<<2, 2); /*1024 counts/Gauss +- 1.2 Gauss accuracy*/
-		error |= i2c_device_register_set_verifiy(hmc_i2c_address, 2, 0, 2); /*continous measurement mode*/
+HAL_StatusTypeDef hmc_setup(void){
+	HAL_StatusTypeDef error = HAL_OK;
+	HAL_StatusTypeDef hmc_status = HAL_I2C_IsDeviceReady(&hi2c1, hmc_i2c_address<<1, 10, 100);
+	if(hmc_status == HAL_OK){
+		error |= i2c_device_register_set_verifiy(hmc_i2c_address, 0, 0x6<<2, 5); /*75 hz data output rate*/
+		error |= i2c_device_register_set_verifiy(hmc_i2c_address, 1, 0x1<<2, 5); /*1024 counts/Gauss +- 1.2 Gauss accuracy*/
+		error |= i2c_device_register_set_verifiy(hmc_i2c_address, 2, 0, 5); /*continous measurement mode*/
 	}
 	else{
-		printf("\nError at hmc connection: %i\n", bmp_status);
-		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-		HAL_Delay(100);
-		//HAL_NVIC_SystemReset();
+		printf("\nHMC setup: Error at hmc connection: %i\n", hmc_status);
+		return hmc_status;
 	}
 	if(error != HAL_OK){
-		printf("\nError at hmc setup: %i\n", error);
-		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
-		HAL_Delay(100);
-		//HAL_NVIC_SystemReset();
+		printf("\nHMC setup: Error at hmc setup: %i\n", error);
+		return error;
 	}
 	else{
 		printf("HMC setup successful!\n");
+		return HAL_OK;
 	}
 }
 HAL_StatusTypeDef MPU_Slave_Setup(I2C_HandleTypeDef *hi2c, MPU_Slave_TypeDef *slave){
 	uint8_t error = HAL_OK;
-	uint8_t mpu_status = HAL_I2C_IsDeviceReady(hi2c, mpu_i2c_address<<1, 5, 50);
+	uint8_t mpu_status = HAL_I2C_IsDeviceReady(hi2c, mpu_i2c_address<<1, 10, 100);
 	uint8_t Config_Data[3];
 
 	Config_Data[0] = slave->RW<<7 | slave->Periph_Address;
@@ -889,41 +873,46 @@ HAL_StatusTypeDef MPU_Slave_Setup(I2C_HandleTypeDef *hi2c, MPU_Slave_TypeDef *sl
 	Config_Data[2] = slave->Slave_Enable<<7 | slave->Byte_Swapping<<6 | slave->REG_DIS<<5 | slave->Byte_Grouping<<4 | slave->Transfer_Length;
 	
 	if(mpu_status == HAL_OK){
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address, 37 + 3*slave->Slave_Number, Config_Data[0], 2);
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address, 38 + 3*slave->Slave_Number, Config_Data[1], 2); 
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address, 39 + 3*slave->Slave_Number, Config_Data[2], 2);
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address, 37 + 3*slave->Slave_Number, Config_Data[0], 5);
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address, 38 + 3*slave->Slave_Number, Config_Data[1], 5); 
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address, 39 + 3*slave->Slave_Number, Config_Data[2], 5);
 	}
 	else{
-		printf("\nError at mpu connection: %i\n", mpu_status);
+		printf("\nSlave %i setup: Error at mpu connection: %i\n", slave->Slave_Number, mpu_status);
+		return mpu_status;
 	}
 	if(error != HAL_OK){
-		printf("\nError at slave %i setup: %i\n", slave->Slave_Number, error);
+		printf("\nSlave %i setup: Error at slave %i setup: %i\n", slave->Slave_Number, slave->Slave_Number, error);
+		return error;
 	}
 	else{
 		printf("Slave %i setup successful!\n", slave->Slave_Number);
+		return HAL_OK;
 	}
 }
-void mpu_master_setup(void){
+HAL_StatusTypeDef mpu_master_setup(void){
 	HAL_StatusTypeDef error = HAL_OK;
-	uint8_t mpu_status = HAL_I2C_IsDeviceReady(&hi2c1, mpu_i2c_address<<1, 5, 50);
+	uint8_t mpu_status = HAL_I2C_IsDeviceReady(&hi2c1, mpu_i2c_address<<1, 10, 100);
 	if(mpu_status == HAL_OK){
     //error |= mpu_register_set_new(56,1, 2); //Interrupt Config (maybe add slave interrupts)
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,52,5, 2); //reduces slave access rate to 1/(1+5) samples (normal sample rate/6 = 83.33 hz)
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,103,1<<1 | 1, 2); //slave 0 and 1 reduced access speed
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,36,13, 2); //Aux i2c master setup
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address,52,5, 5); //reduces slave access rate to 1/(1+5) samples (normal sample rate/6 = 83.33 hz)
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address,103,1<<1 | 1, 5); //slave 0 and 1 reduced access speed
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address,36,13, 5); //Aux i2c master setup
 	
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,55,0, 2); //Aux i2c passthrough disable
-		error |= i2c_device_register_set_verifiy(mpu_i2c_address,106,32, 2); //Aux i2c master on
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address,55,0, 5); //Aux i2c passthrough disable
+		error |= i2c_device_register_set_verifiy(mpu_i2c_address,106,32, 5); //Aux i2c master on
 	}
 	else{
-		printf("\nError at bmp slave setup: %i\n", mpu_status);
+		printf("\nError at mpu master setup: %i\n", mpu_status);
+		return mpu_status;
 	}
 	if(error != HAL_OK){
-		printf("\nError at mpu slave setup: %i\n", error);
-		HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
+		printf("\nError at mpu master setup: %i\n", error);
+		return error;
 	}
 	else{
-		printf("Mpu slave setup successful!\n");
+		printf("Mpu master setup successful!\n");
+		return HAL_OK;
 	}
 }
 void bmp_read_calib(void){
@@ -943,10 +932,19 @@ void bmp_read_calib(void){
 	dig_P8 = rxBuffer[21]<<8 | rxBuffer[20];
 	dig_P9 = rxBuffer[23]<<8 | rxBuffer[22];
 	printf("Status: %i\r\n", status);
-}	
-
-
-
+}
+void mpu_read_dma(void){
+	//printf("R");
+	if(sensor_status.MPU_Setup_Status == HAL_OK){
+		txBuffer[0] = 0x3B;
+		HAL_StatusTypeDef status = HAL_I2C_Mem_Read_DMA(&hi2c1, mpu_i2c_address<<1, 0x3B, 1, mpu_rx_buffer, 26);
+		if(status == HAL_TIMEOUT)
+			status = HAL_ERROR;
+		if(status){
+			sensor_status.MPU_Status = (Sensor_StatusTypedef)status;
+		}
+	}
+}
 
 /* USER CODE END 0 */
 
@@ -979,6 +977,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_I2C1_Init();
   MX_USART1_UART_Init();
   MX_SPI2_Init();
@@ -988,7 +987,10 @@ int main(void)
   MX_TIM3_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-	
+	//set sensor setup typedefs
+	sensor_status.MPU_Setup_Status = HAL_ERROR;
+	sensor_status.HMC_Setup_Status = HAL_ERROR;
+	sensor_status.BMP_Setup_Status = HAL_ERROR;
 	
 	//set_pid_constants
 	pitch_pid.p = pKp;
@@ -1051,16 +1053,34 @@ int main(void)
 		HAL_TIM_IC_Start_IT(&htim1,TIM_CHANNEL_1); //ppm recieve start
 		loop1_last = microseconds();
 		loop2_last = microseconds();
-
-		mpu_setup();
-		hmc_setup();
-		bmp_setup();
+		
+		
+		//sensor setups
+		sensor_status.MPU_Setup_Status = mpu_setup();
+		if(sensor_status.MPU_Setup_Status != HAL_OK){
+			HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13,GPIO_PIN_RESET);
+			//HAL_NVIC_SystemReset();
+			while(1);
+		}
+		sensor_status.HMC_Setup_Status = hmc_setup();
+		sensor_status.BMP_Setup_Status = bmp_setup();
 		bmp_read_calib();
+		
+		
 		//set bmp280 as slave 0
-		MPU_Slave_Setup(&hi2c1, &hmc_slv);
-		MPU_Slave_Setup(&hi2c1, &bmp_slv);
+		if(sensor_status.HMC_Setup_Status == HAL_OK || sensor_status.MPU_Setup_Status == HAL_OK){
+			sensor_status.HMC_Setup_Status = MPU_Slave_Setup(&hi2c1, &hmc_slv);
+		}
+		//set hmc5883 as slave 1
+		if(sensor_status.BMP_Setup_Status == HAL_OK || sensor_status.MPU_Setup_Status == HAL_OK){
+			sensor_status.BMP_Setup_Status = MPU_Slave_Setup(&hi2c1, &bmp_slv);
+		}
 		//mpu master setup
-		mpu_master_setup();
+		HAL_StatusTypeDef mpu_master_setup_status = mpu_master_setup();
+		if(mpu_master_setup_status != HAL_OK){
+			sensor_status.HMC_Setup_Status = HAL_ERROR;
+			sensor_status.BMP_Setup_Status = HAL_ERROR;
+		}
   /* USER CODE END 2 */
  
  
@@ -1073,16 +1093,18 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		if(new_data){
+		//if(new_data){
+		if(dma_new_receive){
 			time_stamps[0] = microseconds();
 			
 			HAL_GPIO_WritePin(CE_GPIO_Port,CE_Pin,GPIO_PIN_SET);
 			new_data = 0;
+			dma_new_receive = 0;
 			mpu_read(); //optimisable
 			
 			time_stamps[1] = microseconds();
 			
-			if(mpu_read_status.MPU_Status == Read_OK){
+			if(sensor_status.MPU_Status == Sensor_Read_OK){
 				MadgwickAHRSupdateIMU(gyroX_rad, gyroY_rad, gyroZ_rad, accX, accY, accZ);//unoptimisable
 			}
 //			this_time = microseconds();
@@ -1140,12 +1162,15 @@ int main(void)
 			uint32_t start_a = microseconds();
 		
 			//CDC_Transmit_FS(pack, strlen((char *)pack));
-//			printf("%f\n",x_degrees);
-//			printf("Y Deg : %f\n",y_degrees);
-//			printf("Z Deg : %f\n",z_degrees);
-//			printf("ROLL : %f\n",roll);
-//			printf("PITCH : %f\n",pitch);
-//			printf("YAW : %f\n",yaw);
+			printf("ROLL : %f\n",roll);
+			printf("PITCH : %f\n",pitch);
+			printf("YAW : %f\n",yaw);
+			printf("MAGX : %f\n",mag_x);
+			printf("MAGY : %f\n",mag_y);
+			printf("MAGZ : %f\n",mag_z);
+			printf("TEMP : %f\n",temperature);
+			printf("PRES : %f\n",pressure);
+			printf("ALT : %f\n",altitude);
 //			printf("TL%f\n", motorTL);
 //			printf("TR%f\n", motorTR);
 //			printf("BL%f\n", motorBL);
@@ -1155,8 +1180,6 @@ int main(void)
 //			printf("PITCH IN : %f\n",pitchIn);
 //			printf("YAW IN   : %f\n",yawIn);
 //			printf("THRO IN   : %f\n",throttleIn);
-			printf("ALTITUDE: %f\r\n", altitude);
-			time_stamps_print(4);
 //			printf("X%f\n",accX_raw);
 //			printf("Y%f\n",accY_raw);
 //			printf("Z%f\n",accZ_raw);
@@ -1167,7 +1190,9 @@ int main(void)
 //			printf("GYY : %i\n",gyroY_Offset);
 //			printf("GYZ : %i\n",gyroZ_Offset);
 //			reciever_print();
-//			printf("L count m: %i\n",loop_count);
+			time_stamps_print(4);
+			printf("L count a: %i\n",loop_count);
+			printf("STATUS:: MPU: %i BMP: %i HMC: %i\n",sensor_status.MPU_Setup_Status, sensor_status.BMP_Setup_Status, sensor_status.HMC_Setup_Status);
 				//printf("Print time: %i\n",(microseconds()-start_a));
 		}
 		//nrf24_test();
@@ -1544,6 +1569,25 @@ static void MX_USART3_UART_Init(void)
 
 }
 
+/** 
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void) 
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel6_IRQn);
+  /* DMA1_Channel7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel7_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel7_IRQn);
+
+}
+
 /**
   * @brief GPIO Initialization Function
   * @param None
@@ -1598,6 +1642,17 @@ static void MX_GPIO_Init(void)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	receiver_signal_loss = 1;
+}
+
+void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *hi2c)
+{
+	//printf("w");//remove
+}
+
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
+{
+	//printf("r");//remove
+	dma_new_receive = 1;
 }
 /* USER CODE END 4 */
 

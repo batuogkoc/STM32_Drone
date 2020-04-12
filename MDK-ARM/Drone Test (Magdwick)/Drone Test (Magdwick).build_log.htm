@@ -22,7 +22,7 @@ Dialog DLL:      TCM.DLL V1.35.1.0
  
 <h2>Project:</h2>
 D:\Batu\Ikincil Masaustu\STM32 Projects\Test Sketches (KeilUVision)\STM32_Drone\MDK-ARM\Drone Test (Magdwick).uvprojx
-Project File Date:  03/19/2020
+Project File Date:  04/12/2020
 
 <h2>Output:</h2>
 *** Using Compiler 'V5.06 update 6 (build 750)', folder: 'D:\Keil_v5\ARM\ARMCC\Bin'
@@ -30,15 +30,23 @@ Build target 'Drone Test (Magdwick)'
 compiling main.c...
 ../Src/main.c(351): warning:  #940-D: missing return statement at end of non-void function "map_with_midpoint" 
   }
-../Src/main.c(369): warning:  #940-D: missing return statement at end of non-void function "i2c_device_register_set_verifiy" 
+../Src/main.c(367): warning:  #940-D: missing return statement at end of non-void function "i2c_device_register_set_verifiy" 
   }
-../Src/main.c(905): warning:  #940-D: missing return statement at end of non-void function "MPU_Slave_Setup" 
-  }
-../Src/main.c: 3 warnings, 0 errors
+../Src/main.c(795): warning:  #188-D: enumerated type mixed with another type
+  	HAL_StatusTypeDef error = 0;
+../Src/main.c(808): warning:  #188-D: enumerated type mixed with another type
+  		return mpu_status;
+../Src/main.c(882): warning:  #188-D: enumerated type mixed with another type
+  		return mpu_status;
+../Src/main.c(886): warning:  #188-D: enumerated type mixed with another type
+  		return error;
+../Src/main.c(907): warning:  #188-D: enumerated type mixed with another type
+  		return mpu_status;
+../Src/main.c: 7 warnings, 0 errors
 linking...
-Program Size: Code=26592 RO-data=856 RW-data=520 ZI-data=1920  
+Program Size: Code=27836 RO-data=852 RW-data=440 ZI-data=2088  
 FromELF: creating hex file...
-"Drone Test (Magdwick)\Drone Test (Magdwick).axf" - 0 Error(s), 3 Warning(s).
+"Drone Test (Magdwick)\Drone Test (Magdwick).axf" - 0 Error(s), 7 Warning(s).
 
 <h2>Software Packages used:</h2>
 
