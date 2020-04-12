@@ -45,7 +45,7 @@ typedef struct{
 	float last_error; //private
 	uint64_t current_micros; //private
 	uint64_t last_micros; //private
-	uint64_t elapsed_seconds; //private
+	float elapsed_seconds; //private
 }PID_TypeDef;
 
 typedef enum{
@@ -239,7 +239,7 @@ _Bool receiver_signal_loss = 0;
 //roll_pid, yaw_pid;
 PID_TypeDef pitch_pid, roll_pid, yaw_pid;
 #define pM 0.5 //0.5
-float pKp = 1.5*pM, pKi = 1.5*pM, pKd = 0.5*pM;//1.5 1.5  0.5 (tweak i) (throttle and sticks a bit twitchy)
+float pKp =1.5*pM, pKi = 1.5*pM, pKd = 0.5*pM;//1.5 1.5  0.5 (tweak i) (throttle and sticks a bit twitchy)
 float rKp = 1.5*pM, rKi = 1.5*pM, rKd = 0.5*pM;
 float yKp = 1*pM, yKi = 0.5*pM, yKd = 0*pM;//1 0.5 0 (tweak i)
 float tpa_pid_p = 0.14; //reduces pid_p value as throttle increases (0.14)
@@ -574,7 +574,7 @@ float Pid_calculate_tpa(PID_TypeDef* pid, float current_state, float desired_sta
   pid->error = current_state-desired_state;
   pid->last_micros = pid->current_micros;
   pid->current_micros = microseconds();
-  pid->elapsed_seconds = (pid->current_micros-pid->last_micros)/ 1000000.0; //!! eliminate the division by the microseconds period if problems arise !!
+  pid->elapsed_seconds = (pid->current_micros-pid->last_micros)/ 1000000.0f; //!! eliminate the division by the microseconds period if problems arise !!
   p_error = (pid->p) * (pid->error) * map_v1(tpa_input, 0, 180, 1+pid->tpa_const, 1-pid->tpa_const);
 	if(pid->i_range != -1){
 	  if((pid->i_range>pid->error)&&(pid->error>-pid->i_range)){
@@ -589,6 +589,7 @@ float Pid_calculate_tpa(PID_TypeDef* pid, float current_state, float desired_sta
 		i_error = 0;
 	}
   d_error = (pid->d*((pid->error-pid->last_error)/pid->elapsed_seconds)); 
+	printf("%f\n", pid->elapsed_seconds);
   return p_error + i_error + d_error;
 	
   /*if(pitch_pid_output > 30)
@@ -1124,7 +1125,7 @@ int main(void)
 			bool i_ignore = (failsafe == 1 || throttleIn < 10);
 			roll_pid_output = Pid_calculate_tpa(&roll_pid, roll, rollIn,  throttleIn, i_ignore);
 			pitch_pid_output = Pid_calculate_tpa(&pitch_pid, pitch, pitchIn,  throttleIn, i_ignore);
-			yaw_pid_output  = Pid_calculate_tpa(&yaw_pid, yaw, yawIn, throttleIn, i_ignore);
+			yaw_pid_output  = Pid_calculate_tpa(&yaw_pid, gyroZ, yawIn, throttleIn, i_ignore);
 
 			
 			time_stamps[3] = microseconds();
@@ -1162,15 +1163,15 @@ int main(void)
 			uint32_t start_a = microseconds();
 		
 			//CDC_Transmit_FS(pack, strlen((char *)pack));
-			printf("ROLL : %f\n",roll);
-			printf("PITCH : %f\n",pitch);
-			printf("YAW : %f\n",yaw);
-			printf("MAGX : %f\n",mag_x);
-			printf("MAGY : %f\n",mag_y);
-			printf("MAGZ : %f\n",mag_z);
-			printf("TEMP : %f\n",temperature);
-			printf("PRES : %f\n",pressure);
-			printf("ALT : %f\n",altitude);
+//			printf("ROLL : %f\n",roll);
+//			printf("PITCH : %f\n",pitch);
+//			printf("YAW : %f\n",yaw);
+//			printf("MAGX : %f\n",mag_x);
+//			printf("MAGY : %f\n",mag_y);
+//			printf("MAGZ : %f\n",mag_z);
+//			printf("TEMP : %f\n",temperature);
+//			printf("PRES : %f\n",pressure);
+//			printf("ALT : %f\n",altitude);
 //			printf("TL%f\n", motorTL);
 //			printf("TR%f\n", motorTR);
 //			printf("BL%f\n", motorBL);
@@ -1183,16 +1184,13 @@ int main(void)
 //			printf("X%f\n",accX_raw);
 //			printf("Y%f\n",accY_raw);
 //			printf("Z%f\n",accZ_raw);
-//			printf("GYX : %i\n",gyroX_raw);
-//			printf("GYY : %i\n",gyroY_raw);
-//			printf("GYZ : %i\n",gyroZ_raw);
-//			printf("GYX : %i\n",gyroX_Offset);
-//			printf("GYY : %i\n",gyroY_Offset);
-//			printf("GYZ : %i\n",gyroZ_Offset);
+//			printf("GYX : %f\n",gyroX);
+//			printf("GYY : %f\n",gyroY);
+//			printf("GYZ : %f\n",gyroZ);
 //			reciever_print();
-			time_stamps_print(4);
-			printf("L count a: %i\n",loop_count);
-			printf("STATUS:: MPU: %i BMP: %i HMC: %i\n",sensor_status.MPU_Setup_Status, sensor_status.BMP_Setup_Status, sensor_status.HMC_Setup_Status);
+//			time_stamps_print(4);
+//			printf("L count a: %i\n",loop_count);
+//			printf("STATUS:: MPU: %i BMP: %i HMC: %i\n",sensor_status.MPU_Setup_Status, sensor_status.BMP_Setup_Status, sensor_status.HMC_Setup_Status);
 				//printf("Print time: %i\n",(microseconds()-start_a));
 		}
 		//nrf24_test();
